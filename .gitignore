@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+
+# Secrets
+.env
+.env.local
+*.session
+*.session-journal
+
+# Generated data
+exports/
+backups/
+*.log
+logs/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

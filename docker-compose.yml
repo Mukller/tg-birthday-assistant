@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tba_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: birthday_assistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - tba_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d birthday_assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tba_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - tba_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: tba_app
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override host-based URLs with in-network service names
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/birthday_assistant?schema=public
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./exports:/app/exports
+      - ./backups:/app/backups
+
+volumes:
+  tba_pgdata:
+  tba_redisdata:

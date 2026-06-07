@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.env
+*.session
+exports
+backups
+logs
+npm-debug.log
