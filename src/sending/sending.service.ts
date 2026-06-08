@@ -1,7 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ScheduledMessage } from '@prisma/client';
+import { Redis } from 'ioredis';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { REDIS_CLIENT } from '../common/redis/redis.constants';
 import { MtprotoService } from '../mtproto/mtproto.service';
 import { FloodWaitSignal, SessionInvalidSignal } from '../mtproto/errors';
 import { LogsService } from '../logs/logs.service';
@@ -20,6 +22,7 @@ export class SendingService implements OnModuleInit {
     private readonly notifier: NotifierService,
     private readonly queue: QueueService,
     private readonly config: ConfigService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
   onModuleInit(): void {
@@ -118,6 +121,7 @@ export class SendingService implements OnModuleInit {
         sm.messageText,
       );
       await this.prisma.scheduledMessage.update({ where: { id: sm.id }, data: { status: 'sent' } });
+      await this.redis.del(`send:retries:${sm.id}`);
       await this.logs.log({
         userId,
         contactId: contact.id,
@@ -181,7 +185,29 @@ export class SendingService implements OnModuleInit {
       throw e; // mark job failed; queue stays paused
     }
 
-    this.logger.error(`Send failed for user ${userId}: ${e?.message}`);
+    // Transient error: retry with backoff up to maxRetries before giving up.
+    const retryKey = `send:retries:${sm.id}`;
+    const maxRetries = 2;
+    const attempt = await this.redis.incr(retryKey);
+    await this.redis.expire(retryKey, 6 * 3600);
+    if (attempt <= maxRetries) {
+      const backoffMs = attempt * 60_000;
+      const jobId = await this.queue.enqueueSend(userId, sm.id, backoffMs);
+      await this.prisma.scheduledMessage.update({ where: { id: sm.id }, data: { bullmqJobId: jobId } });
+      await this.logs.log({
+        userId,
+        contactId,
+        messageText: sm.messageText,
+        status: 'retry_scheduled',
+        errorMessage: `retry ${attempt}/${maxRetries}: ${String(e?.message ?? e).slice(0, 200)}`,
+        retryAt: new Date(Date.now() + backoffMs),
+      });
+      this.logger.warn(`Send retry ${attempt}/${maxRetries} for user ${userId}: ${e?.message}`);
+      return;
+    }
+
+    await this.redis.del(retryKey);
+    this.logger.error(`Send failed permanently for user ${userId}: ${e?.message}`);
     await this.prisma.scheduledMessage.update({ where: { id: sm.id }, data: { status: 'failed' } });
     await this.logs.log({
       userId,
@@ -192,7 +218,7 @@ export class SendingService implements OnModuleInit {
     });
     await this.notifier.notify(
       telegramId,
-      `❌ Не удалось отправить поздравление для <b>${esc(contactName)}</b>.`,
+      `❌ Не удалось отправить поздравление для <b>${esc(contactName)}</b> (после ${maxRetries} повторов).`,
     );
   }
 }

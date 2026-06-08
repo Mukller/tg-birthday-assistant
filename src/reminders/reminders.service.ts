@@ -1,12 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ReminderRule } from '@prisma/client';
+import { Redis } from 'ioredis';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { REDIS_CLIENT } from '../common/redis/redis.constants';
 
 export const DEFAULT_REMINDER_DAYS = [7, 3, 1, 0];
+const SNOOZE_INDEX = 'snooze:users';
 
 @Injectable()
 export class RemindersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
 
   async ensureDefaultRules(userId: number): Promise<void> {
     const count = await this.prisma.reminderRule.count({ where: { userId } });
@@ -83,5 +89,32 @@ export class RemindersService {
       data: { userId, contactId, reminderRuleId, remindAt, status: 'sent' },
     });
     return true;
+  }
+
+  // ── Snooze ("напомнить позже") ────────────────────────────────────
+
+  private snoozeKey(userId: number): string {
+    return `snooze:${userId}`;
+  }
+
+  async snoozeUntil(userId: number, until: Date): Promise<void> {
+    await this.redis.set(this.snoozeKey(userId), until.toISOString());
+    await this.redis.sadd(SNOOZE_INDEX, String(userId));
+  }
+
+  /** Return user ids whose snooze is due now and clear them. */
+  async popDueSnoozes(): Promise<number[]> {
+    const ids = await this.redis.smembers(SNOOZE_INDEX);
+    const due: number[] = [];
+    const now = Date.now();
+    for (const id of ids) {
+      const ts = await this.redis.get(this.snoozeKey(Number(id)));
+      if (ts && new Date(ts).getTime() <= now) {
+        due.push(Number(id));
+        await this.redis.del(this.snoozeKey(Number(id)));
+        await this.redis.srem(SNOOZE_INDEX, id);
+      }
+    }
+    return due;
   }
 }

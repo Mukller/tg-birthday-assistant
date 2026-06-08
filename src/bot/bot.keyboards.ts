@@ -38,7 +38,10 @@ export const contactsListKeyboard = (contacts: Contact[], page: number, hasNext:
   if (page > 0) nav.push(Markup.button.callback('« Назад', `contacts:page:${page - 1}`));
   if (hasNext) nav.push(Markup.button.callback('Вперёд »', `contacts:page:${page + 1}`));
   if (nav.length) rows.push(nav);
-  rows.push([Markup.button.callback('🔍 Поиск', 'contacts:search')]);
+  rows.push([
+    Markup.button.callback('🔍 Поиск', 'contacts:search'),
+    Markup.button.callback('➕ Добавить', 'contacts:add'),
+  ]);
   rows.push([Markup.button.callback('« Главное меню', 'menu:main')]);
   return Markup.inlineKeyboard(rows);
 };
@@ -68,6 +71,7 @@ export const remindersKeyboard = (
     Markup.button.callback('+7', 'rule:add:7'),
     Markup.button.callback('+30', 'rule:add:30'),
   ]);
+  rows.push([Markup.button.callback('✏️ Своё (кол-во дней)', 'rule:custom')]);
   rows.push([
     inOnboarding
       ? Markup.button.callback('➡️ Завершить настройку', 'onb:finish')

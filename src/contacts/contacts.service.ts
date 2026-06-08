@@ -110,17 +110,22 @@ export class ContactsService {
     });
   }
 
+  /** Token-based search: every whitespace token must match name/username/phone. */
   async search(userId: number, query: string, limit = 8): Promise<Contact[]> {
-    const q = query.trim();
-    return this.prisma.contact.findMany({
-      where: {
-        ownerUserId: userId,
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+    if (tokens.length === 0) return [];
+    const AND = tokens.map((t) => {
+      const clean = t.replace(/^@/, '');
+      return {
         OR: [
-          { fullName: { contains: q, mode: 'insensitive' } },
-          { username: { contains: q, mode: 'insensitive' } },
-          { phone: { contains: q } },
+          { fullName: { contains: clean, mode: 'insensitive' as const } },
+          { username: { contains: clean, mode: 'insensitive' as const } },
+          { phone: { contains: clean } },
         ],
-      },
+      };
+    });
+    return this.prisma.contact.findMany({
+      where: { ownerUserId: userId, AND },
       orderBy: [{ rankingScore: 'desc' }, { fullName: 'asc' }],
       take: limit,
     });

@@ -17,11 +17,13 @@ import { LogsService } from '../logs/logs.service';
 import { ExportService, ExportType, ExportFormat } from '../export/export.service';
 import { FsmService } from '../fsm/fsm.service';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { QueueService } from '../queue/queue.service';
 
 import { esc } from '../common/html.util';
 import { dayLabel } from '../common/labels';
 import { formatBirthDate, nextBirthdayInfo, toBirthDate } from '../common/date.util';
 import { buildCalendar } from './bot.calendar';
+import { generateSuggestions } from './suggestions';
 import * as kb from './bot.keyboards';
 
 const STEP = {
@@ -32,6 +34,8 @@ const STEP = {
   CONTACT_TIME: 'CONTACT_TIME',
   SEARCH: 'SEARCH',
   IMPORT_WAIT: 'IMPORT_WAIT',
+  CUSTOM_RULE: 'CUSTOM_RULE',
+  ADD_CONTACT: 'ADD_CONTACT',
 } as const;
 
 const PAGE_SIZE = 8;
@@ -52,6 +56,7 @@ export class BotUpdate {
     private readonly exporter: ExportService,
     private readonly fsm: FsmService,
     private readonly prisma: PrismaService,
+    private readonly queue: QueueService,
     private readonly config: ConfigService,
   ) {}
 
@@ -90,8 +95,15 @@ export class BotUpdate {
 
   @Start()
   async onStart(@Ctx() ctx: Context): Promise<void> {
+    const existing = await this.users.getByTelegramId(ctx.from!.id);
+    const wasDeleted = existing?.deletedAt != null;
     const user = await this.me(ctx);
     await this.fsm.clear(ctx.from!.id);
+    if (wasDeleted) {
+      await this.users.restore(user.id);
+      await this.queue.resumeUser(user.id);
+      await this.reply(ctx, '♻️ С возвращением! Аккаунт восстановлен, данные на месте.');
+    }
     const onboarding = await this.prisma.onboardingState.findUnique({ where: { userId: user.id } });
     if (onboarding?.completed) {
       await this.showMain(ctx, user, false);
@@ -103,6 +115,26 @@ export class BotUpdate {
   @Command('menu')
   async onMenu(@Ctx() ctx: Context): Promise<void> {
     await this.showMain(ctx, await this.me(ctx), false);
+  }
+
+  @Command('help')
+  async onHelp(@Ctx() ctx: Context): Promise<void> {
+    await this.reply(
+      ctx,
+      '🎂 <b>Birthday Assistant — помощь</b>\n\n' +
+        'Я напоминаю о днях рождения и отправляю поздравления <b>от вашего имени</b>.\n\n' +
+        '<b>Команды:</b>\n' +
+        '/start — запуск / восстановление аккаунта\n' +
+        '/menu — главное меню\n' +
+        '/help — эта справка\n\n' +
+        '<b>Как пользоваться:</b>\n' +
+        '1) Подключите Telegram-аккаунт (⚙️ Настройки)\n' +
+        '2) Импортируйте контакты и задайте даты рождения (📇 Контакты)\n' +
+        '3) Настройте напоминания (⚙️ → Правила)\n' +
+        '4) Пишите поздравления и отправляйте сейчас или планируйте на ДР (✍️)\n\n' +
+        '💡 Текст можно сгенерировать кнопкой «Подсказать текст».',
+      kb.mainMenuKeyboard(),
+    );
   }
 
   @Command('admin')
@@ -451,6 +483,10 @@ export class BotUpdate {
     await this.safeEdit(
       ctx,
       `✍️ Напишите текст поздравления для <b>${esc(c.fullName)}</b>.${hint}`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback('💡 Подсказать текст', `cg:suggest:${contactId}`)],
+        [Markup.button.callback('« Отмена', `c:view:${contactId}`)],
+      ]),
     );
   }
 
@@ -708,6 +744,102 @@ export class BotUpdate {
     await this.safeEdit(ctx, lines.join('\n'), kb.adminKeyboard());
   }
 
+  // ── Snooze reminders ──────────────────────────────────────────────
+
+  @Action('rem:snooze')
+  async actSnooze(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery('Напомню через 3 часа');
+    const user = await this.me(ctx);
+    await this.reminders.snoozeUntil(user.id, new Date(Date.now() + 3 * 3_600_000));
+    try {
+      await ctx.editMessageReplyMarkup(undefined);
+    } catch {
+      /* ignore */
+    }
+    await this.reply(ctx, '⏰ Хорошо, напомню об этих днях рождения через 3 часа.');
+  }
+
+  // ── Custom reminder rule ──────────────────────────────────────────
+
+  @Action('rule:custom')
+  async actRuleCustom(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    await this.fsm.setState(ctx.from!.id, STEP.CUSTOM_RULE);
+    await this.safeEdit(ctx, '✏️ За сколько дней до ДР напоминать? Отправьте число (0–365).');
+  }
+
+  private async handleCustomRule(ctx: Context, user: User, text: string): Promise<void> {
+    const n = parseInt(text.trim(), 10);
+    if (Number.isNaN(n) || n < 0 || n > 365) {
+      await this.reply(ctx, '⚠️ Нужно число от 0 до 365.');
+      return;
+    }
+    await this.reminders.addRule(user.id, n);
+    await this.fsm.clear(ctx.from!.id);
+    const rules = await this.reminders.listRules(user.id);
+    await this.reply(ctx, `✅ Добавлено правило: за ${n} дн.`, kb.remindersKeyboard(rules, false));
+  }
+
+  // ── Manual contact add ────────────────────────────────────────────
+
+  @Action('contacts:add')
+  async actContactsAdd(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    await this.fsm.setState(ctx.from!.id, STEP.ADD_CONTACT);
+    await this.safeEdit(
+      ctx,
+      '➕ Введите имя контакта (можно с @username), например:\n<code>Анна Сергеева @anna</code>',
+    );
+  }
+
+  private async handleAddContact(ctx: Context, user: User, text: string): Promise<void> {
+    const raw = text.trim();
+    if (!raw) {
+      await this.reply(ctx, '⚠️ Введите имя.');
+      return;
+    }
+    const usernameMatch = raw.match(/@(\w{3,})/);
+    const username = usernameMatch ? usernameMatch[1] : undefined;
+    const fullName = raw.replace(/@\w+/g, '').trim() || username || 'Контакт';
+    const c = await this.contacts.create(user.id, { fullName, username });
+    await this.fsm.clear(ctx.from!.id);
+    await this.reply(ctx, `✅ Контакт добавлен: <b>${esc(c.fullName)}</b>. Укажите дату рождения 👇`);
+    await this.showContactCard(ctx, user, c.id);
+  }
+
+  // ── Suggested congratulation text ─────────────────────────────────
+
+  @Action(/^cg:suggest:(\d+)$/)
+  async actCongratSuggest(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const contactId = parseInt((ctx as any).match[1], 10);
+    const c = await this.contacts.getById(user.id, contactId);
+    if (!c) return;
+    const suggestions = generateSuggestions(c.fullName);
+    const rows = suggestions.map((_, i) => [
+      Markup.button.callback(`Взять вариант ${i + 1}`, `cg:use:${contactId}:${i}`),
+    ]);
+    rows.push([Markup.button.callback('« Назад', `c:congrat:${contactId}`)]);
+    const preview = suggestions.map((s, i) => `<b>${i + 1}.</b> ${esc(s)}`).join('\n\n');
+    await this.safeEdit(ctx, `💡 Варианты поздравления:\n\n${preview}`, Markup.inlineKeyboard(rows));
+  }
+
+  @Action(/^cg:use:(\d+):(\d+)$/)
+  async actCongratUse(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery('Текст выбран');
+    const user = await this.me(ctx);
+    const m = (ctx as any).match;
+    const contactId = parseInt(m[1], 10);
+    const idx = parseInt(m[2], 10);
+    const c = await this.contacts.getById(user.id, contactId);
+    if (!c) return;
+    const suggestions = generateSuggestions(c.fullName);
+    await this.drafts.createDraft(user.id, contactId, suggestions[idx] ?? suggestions[0]);
+    await this.fsm.clear(ctx.from!.id);
+    await this.showCongratPreview(ctx, user, contactId, true);
+  }
+
   // ── Free-text & document routing (must stay last) ─────────────────
 
   @On('text')
@@ -733,6 +865,10 @@ export class BotUpdate {
         return this.handleTime(ctx, user, text);
       case STEP.SEARCH:
         return this.handleSearch(ctx, user, text);
+      case STEP.CUSTOM_RULE:
+        return this.handleCustomRule(ctx, user, text);
+      case STEP.ADD_CONTACT:
+        return this.handleAddContact(ctx, user, text);
       default:
         await this.reply(ctx, 'Откройте меню: /menu');
     }

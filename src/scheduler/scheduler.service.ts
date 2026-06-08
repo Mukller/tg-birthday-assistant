@@ -38,6 +38,21 @@ export class SchedulerService implements OnModuleInit {
     await this.runReminders();
   }
 
+  /** Re-deliver reminders that the user snoozed once their snooze is due. */
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async snoozeSweep(): Promise<void> {
+    const due = await this.reminders.popDueSnoozes();
+    for (const userId of due) {
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user || !user.isActive) continue;
+      try {
+        await this.remindUser(user.id, user.telegramId, user.timezone, true);
+      } catch (e: any) {
+        this.logger.warn(`Snooze re-send failed for user ${user.id}: ${e?.message}`);
+      }
+    }
+  }
+
   async runReminders(): Promise<void> {
     const users = await this.prisma.user.findMany({ where: { isActive: true } });
     for (const user of users) {
@@ -49,7 +64,12 @@ export class SchedulerService implements OnModuleInit {
     }
   }
 
-  private async remindUser(userId: number, telegramId: bigint, tz: string): Promise<void> {
+  private async remindUser(
+    userId: number,
+    telegramId: bigint,
+    tz: string,
+    force = false,
+  ): Promise<void> {
     const daysBeforeList = await this.reminders.listActiveDaysBefore(userId);
     if (daysBeforeList.length === 0) return;
 
@@ -60,8 +80,11 @@ export class SchedulerService implements OnModuleInit {
 
     const groups = new Map<number, UpcomingContact[]>();
     for (const u of due) {
-      const isNew = await this.reminders.recordReminderJob(userId, u.contact.id, null, new Date());
-      if (!isNew) continue; // already reminded today
+      // On a forced (snooze) re-send, skip the once-per-day idempotency guard.
+      if (!force) {
+        const isNew = await this.reminders.recordReminderJob(userId, u.contact.id, null, new Date());
+        if (!isNew) continue;
+      }
       const arr = groups.get(u.daysUntil) ?? [];
       arr.push(u);
       groups.set(u.daysUntil, arr);
@@ -71,6 +94,7 @@ export class SchedulerService implements OnModuleInit {
     await this.notifier.notify(telegramId, this.formatGrouped(groups), {
       reply_markup: Markup.inlineKeyboard([
         [Markup.button.callback('✍️ Написать поздравления', 'menu:congrats')],
+        [Markup.button.callback('⏰ Напомнить позже (3 ч)', 'rem:snooze')],
         [Markup.button.callback('🎂 Главное меню', 'menu:main')],
       ]).reply_markup,
     });
