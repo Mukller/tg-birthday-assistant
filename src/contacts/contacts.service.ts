@@ -2,7 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Contact } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { MtprotoService, ContactCandidate } from '../mtproto/mtproto.service';
-import { nextBirthdayInfo } from '../common/date.util';
+import { FloodWaitSignal } from '../mtproto/errors';
+import { nextBirthdayInfo, toBirthDate } from '../common/date.util';
+import { sleep } from '../common/html.util';
 
 export interface ImportResult {
   imported: number;
@@ -191,5 +193,54 @@ export class ContactsService {
     await this.prisma.contact.deleteMany({
       where: { id: contactId, ownerUserId: userId },
     });
+  }
+
+  /**
+   * Smart birthday detection: pull birthdays from Telegram for top-ranked
+   * contacts that don't have one yet (only those who set a visible birthday).
+   * Capped per run and paced to avoid FloodWait; stops early on FloodWait.
+   */
+  async detectBirthdays(
+    userId: number,
+    max = 150,
+  ): Promise<{ scanned: number; found: number; floodWait: boolean }> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { ownerUserId: userId, birthDate: null, telegramUserId: { not: null } },
+      orderBy: { rankingScore: 'desc' },
+      take: max,
+    });
+
+    let scanned = 0;
+    let found = 0;
+    let floodWait = false;
+
+    for (const c of contacts) {
+      scanned++;
+      try {
+        const b = await this.mtproto.getBirthday(userId, {
+          telegramUserId: c.telegramUserId,
+          username: c.username,
+          phone: c.normalizedPhone,
+        });
+        if (b) {
+          // year 1900 acts as "no year" sentinel (formatBirthDate hides it)
+          await this.prisma.contact.update({
+            where: { id: c.id },
+            data: { birthDate: toBirthDate(b.year ?? 1900, b.month, b.day) },
+          });
+          found++;
+        }
+      } catch (e) {
+        if (e instanceof FloodWaitSignal) {
+          floodWait = true;
+          break;
+        }
+        // per-contact errors (privacy, PEER_ID_INVALID, etc.) — skip
+      }
+      await sleep(300);
+    }
+
+    this.logger.log(`Birthday detection for user ${userId}: ${found}/${scanned} found`);
+    return { scanned, found, floodWait };
   }
 }

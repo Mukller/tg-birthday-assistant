@@ -208,10 +208,17 @@ export class BotUpdate {
       where: { ownerUserId: user.id, birthDate: { not: null } },
     });
     if (contacts.length === 0) {
+      const total = await this.contacts.count(user.id);
       await this.safeEdit(
         ctx,
-        '📅 Пока нет ни одной даты рождения.\nДобавьте даты в разделе 📇 Контакты.',
-        kb.backToMenu(),
+        `📅 Календарь пуст: ни у одного из ${total} контактов не указана дата рождения.\n\n` +
+          'Можно проставить вручную (📇 Контакты → выбрать → 📅 Дата) или попробовать ' +
+          'найти автоматически — я вытяну дни рождения у тех, кто указал их в Telegram.',
+        Markup.inlineKeyboard([
+          [Markup.button.callback('🔍 Найти дни рождения в Telegram', 'bd:detect')],
+          [Markup.button.callback('📇 Контакты', 'menu:contacts')],
+          [Markup.button.callback('« Главное меню', 'menu:main')],
+        ]),
       );
       return;
     }
@@ -236,6 +243,41 @@ export class BotUpdate {
     if (items.length > limit) lines.push('', `… и ещё ${items.length - limit}`);
 
     await this.safeEdit(ctx, lines.join('\n').trim(), kb.backToMenu());
+  }
+
+  @Action('bd:detect')
+  async actDetectBirthdays(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery('Запускаю поиск…');
+    const user = await this.me(ctx);
+    if (!(await this.sessions.hasActive(user.id))) {
+      await this.safeEdit(ctx, '⚠️ Сначала подключите аккаунт (⚙️ Настройки).', kb.backToMenu());
+      return;
+    }
+    await this.safeEdit(
+      ctx,
+      '🔍 Ищу дни рождения в Telegram (до ~150 контактов). Это займёт 1–2 минуты — ' +
+        'дождитесь сообщения с результатом…',
+    );
+    try {
+      const res = await this.contacts.detectBirthdays(user.id, 150);
+      const note = res.floodWait
+        ? '\n⏳ Telegram попросил паузу — часть контактов не проверена, запустите ещё раз позже.'
+        : '';
+      await this.reply(
+        ctx,
+        `✅ Готово. Проверено: ${res.scanned}, найдено дат: <b>${res.found}</b>.${note}\n\n` +
+          (res.found > 0
+            ? 'Открой 📅 Календарь — даты уже там.'
+            : 'Ни у кого из проверенных контактов не указан день рождения в Telegram. ' +
+              'Можно проставить вручную в 📇 Контакты.'),
+        Markup.inlineKeyboard([
+          [Markup.button.callback('📅 Календарь', 'menu:calendar')],
+          [Markup.button.callback('« Главное меню', 'menu:main')],
+        ]),
+      );
+    } catch (e: any) {
+      await this.reply(ctx, `❌ Ошибка поиска: ${esc(e?.message)}`, kb.backToMenu());
+    }
   }
 
   // ── Account connection / login ────────────────────────────────────

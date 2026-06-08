@@ -36,6 +36,10 @@ import { HealthModule } from './health/health.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         token: config.get<string>('botToken')!,
+        // We launch the bot manually in main.ts so we can catch launch errors
+        // (nestjs-telegraf's auto-launch is fire-and-forget without a .catch,
+        // which silently kills polling on a transient 409).
+        launchOptions: false,
       }),
     }),
 

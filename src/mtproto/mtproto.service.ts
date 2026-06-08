@@ -291,6 +291,23 @@ export class MtprotoService {
     }
   }
 
+  /** Read a contact's birthday from their full profile (if set & visible). */
+  async getBirthday(
+    userId: number,
+    peer: { telegramUserId: bigint | null; username: string | null; phone: string | null },
+  ): Promise<{ day: number; month: number; year: number | null } | null> {
+    try {
+      const client = await this.getClient(userId);
+      const entity = await this.resolvePeer(userId, client, peer);
+      const full: any = await client.invoke(new Api.users.GetFullUser({ id: entity }));
+      const b = full?.fullUser?.birthday;
+      if (!b || !b.day || !b.month) return null;
+      return { day: b.day, month: b.month, year: b.year ?? null };
+    } catch (e: any) {
+      throw this.translateError(userId, e);
+    }
+  }
+
   private async resolvePeer(
     userId: number,
     client: TelegramClient,
