@@ -22,7 +22,7 @@ import { QueueService } from '../queue/queue.service';
 import { esc } from '../common/html.util';
 import { dayLabel } from '../common/labels';
 import { formatBirthDate, nextBirthdayInfo, toBirthDate } from '../common/date.util';
-import { buildCalendar } from './bot.calendar';
+import { buildCalendar, buildBirthdayCalendar } from './bot.calendar';
 import { generateSuggestions } from './suggestions';
 import * as kb from './bot.keyboards';
 
@@ -200,49 +200,120 @@ export class BotUpdate {
   @Action('menu:calendar')
   async actCalendar(@Ctx() ctx: Context): Promise<void> {
     await ctx.answerCbQuery();
-    await this.showCalendar(ctx, await this.me(ctx));
+    const now = DateTime.now();
+    await this.showBirthdayCalendar(ctx, await this.me(ctx), now.year, now.month);
   }
 
-  private async showCalendar(ctx: Context, user: User): Promise<void> {
+  @Action(/^bcal:nav:(\d+):(\d+)$/)
+  async actBcalNav(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const m = (ctx as any).match;
+    await this.showBirthdayCalendar(ctx, await this.me(ctx), parseInt(m[1], 10), parseInt(m[2], 10));
+  }
+
+  private async showBirthdayCalendar(
+    ctx: Context,
+    user: User,
+    year: number,
+    month: number,
+  ): Promise<void> {
     const contacts = await this.prisma.contact.findMany({
       where: { ownerUserId: user.id, birthDate: { not: null } },
     });
+    const byDay = new Set<number>();
+    for (const c of contacts) {
+      const dt = DateTime.fromJSDate(c.birthDate!, { zone: 'utc' });
+      if (dt.month === month) byDay.add(dt.day);
+    }
+    const monthName = DateTime.fromObject({ year, month, day: 1 }).setLocale('ru').toFormat('LLLL yyyy');
+    const cap = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+
+    let header: string;
     if (contacts.length === 0) {
       const total = await this.contacts.count(user.id);
-      await this.safeEdit(
-        ctx,
-        `📅 Календарь пуст: ни у одного из ${total} контактов не указана дата рождения.\n\n` +
-          'Можно проставить вручную (📇 Контакты → выбрать → 📅 Дата) или попробовать ' +
-          'найти автоматически — я вытяну дни рождения у тех, кто указал их в Telegram.',
-        Markup.inlineKeyboard([
-          [Markup.button.callback('🔍 Найти дни рождения в Telegram', 'bd:detect')],
-          [Markup.button.callback('📇 Контакты', 'menu:contacts')],
-          [Markup.button.callback('« Главное меню', 'menu:main')],
-        ]),
-      );
-      return;
+      header =
+        `📅 <b>Календарь дней рождения</b> — ${cap}\n\n` +
+        `Пока нет ни одной даты (из ${total} контактов). Листай месяцы стрелками; ` +
+        `или найди дни рождения автоматически 👇`;
+    } else {
+      header = `📅 <b>${cap}</b>\nДни с 🎂 — есть день рождения. Нажми на день, чтобы увидеть кто.`;
     }
+    await this.safeEdit(
+      ctx,
+      header,
+      buildBirthdayCalendar(year, month, [...byDay], contacts.length === 0),
+    );
+  }
 
-    const items = contacts
-      .map((c) => ({ c, info: nextBirthdayInfo(c.birthDate!, user.timezone) }))
-      .sort((a, b) => a.info.daysUntil - b.info.daysUntil);
-
-    const lines: string[] = ['📅 <b>Календарь дней рождения</b>', ''];
-    const limit = 50;
-    let currentMonth = '';
-    for (const { c, info } of items.slice(0, limit)) {
-      const month = info.next.setLocale('ru').toFormat('LLLL');
-      if (month !== currentMonth) {
-        currentMonth = month;
-        lines.push('', `<b>${month.charAt(0).toUpperCase()}${month.slice(1)}</b>`);
-      }
+  @Action(/^bcal:day:(\d+):(\d+):(\d+)$/)
+  async actBcalDay(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const m = (ctx as any).match;
+    const user = await this.me(ctx);
+    const year = parseInt(m[1], 10);
+    const month = parseInt(m[2], 10);
+    const day = parseInt(m[3], 10);
+    const contacts = await this.prisma.contact.findMany({
+      where: { ownerUserId: user.id, birthDate: { not: null } },
+    });
+    const matches = contacts.filter((c) => {
+      const dt = DateTime.fromJSDate(c.birthDate!, { zone: 'utc' });
+      return dt.month === month && dt.day === day;
+    });
+    const dd = String(day).padStart(2, '0');
+    const mm = String(month).padStart(2, '0');
+    const lines = [`🎂 <b>${dd}.${mm}</b> — дни рождения`, ''];
+    if (matches.length === 0) lines.push('Никого.');
+    for (const c of matches) {
+      const info = nextBirthdayInfo(c.birthDate!, user.timezone);
       const when = info.daysUntil === 0 ? 'сегодня' : `через ${info.daysUntil} дн.`;
-      const age = info.turning != null ? `, ${info.turning}` : '';
-      lines.push(`• ${info.next.toFormat('dd.MM')} — ${esc(c.fullName)} (${when}${age})`);
+      const age = info.turning != null ? `, исполнится ${info.turning}` : '';
+      lines.push(`• ${esc(c.fullName)} (${when}${age})`);
     }
-    if (items.length > limit) lines.push('', `… и ещё ${items.length - limit}`);
+    await this.safeEdit(
+      ctx,
+      lines.join('\n'),
+      Markup.inlineKeyboard([
+        [Markup.button.callback('« Назад к календарю', `bcal:nav:${year}:${month}`)],
+        [Markup.button.callback('« Главное меню', 'menu:main')],
+      ]),
+    );
+  }
 
-    await this.safeEdit(ctx, lines.join('\n').trim(), kb.backToMenu());
+  @Action(/^bcal:list:(\d+):(\d+)$/)
+  async actBcalList(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const m = (ctx as any).match;
+    const user = await this.me(ctx);
+    const year = parseInt(m[1], 10);
+    const month = parseInt(m[2], 10);
+    const contacts = await this.prisma.contact.findMany({
+      where: { ownerUserId: user.id, birthDate: { not: null } },
+    });
+    const items = contacts
+      .map((c) => ({ c, dt: DateTime.fromJSDate(c.birthDate!, { zone: 'utc' }) }))
+      .filter((x) => x.dt.month === month)
+      .sort((a, b) => a.dt.day - b.dt.day);
+    const monthName = DateTime.fromObject({ year, month, day: 1 }).setLocale('ru').toFormat('LLLL');
+    const cap = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+    const lines = [`📜 <b>Дни рождения — ${cap}</b>`, ''];
+    if (items.length === 0) lines.push('В этом месяце нет дней рождения.');
+    for (const { c, dt } of items) {
+      const info = nextBirthdayInfo(c.birthDate!, user.timezone);
+      const age = info.turning != null ? `, ${info.turning}` : '';
+      const mm = String(month).padStart(2, '0');
+      lines.push(
+        `• ${String(dt.day).padStart(2, '0')}.${mm} — ${esc(c.fullName)} (через ${info.daysUntil} дн.${age})`,
+      );
+    }
+    await this.safeEdit(
+      ctx,
+      lines.join('\n'),
+      Markup.inlineKeyboard([
+        [Markup.button.callback('« Назад к календарю', `bcal:nav:${year}:${month}`)],
+        [Markup.button.callback('« Главное меню', 'menu:main')],
+      ]),
+    );
   }
 
   @Action('bd:detect')
