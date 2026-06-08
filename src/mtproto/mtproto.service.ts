@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TelegramClient, Api } from 'telegram';
+import bigInt from 'big-integer';
 import { StringSession } from 'telegram/sessions';
 import { computeCheck } from 'telegram/Password';
 import { FloodWaitError } from 'telegram/errors';
@@ -23,6 +24,13 @@ export interface ContactCandidate {
 
 export interface SendResult {
   telegramMessageId: bigint | null;
+}
+
+export interface StarGiftInfo {
+  id: string; // long as string
+  stars: number;
+  limited: boolean;
+  birthday: boolean;
 }
 
 /**
@@ -303,6 +311,56 @@ export class MtprotoService {
       const b = full?.fullUser?.birthday;
       if (!b || !b.day || !b.month) return null;
       return { day: b.day, month: b.month, year: b.year ?? null };
+    } catch (e: any) {
+      throw this.translateError(userId, e);
+    }
+  }
+
+  // ── Gifts (Telegram Stars) ────────────────────────────────────────
+
+  async getStarBalance(userId: number): Promise<number> {
+    const client = await this.getClient(userId);
+    const status: any = await client.invoke(new Api.payments.GetStarsStatus({ peer: 'me' }));
+    const bal = status?.balance;
+    if (bal == null) return 0;
+    return typeof bal === 'object' ? Number(bal.amount ?? bal.stars ?? 0) : Number(bal);
+  }
+
+  async listGifts(userId: number): Promise<StarGiftInfo[]> {
+    const client = await this.getClient(userId);
+    const res: any = await client.invoke(new Api.payments.GetStarGifts({ hash: 0 }));
+    const gifts = res?.gifts ?? [];
+    return gifts
+      .filter((g: any) => g.className === 'StarGift' && !g.soldOut)
+      .map((g: any) => ({
+        id: g.id.toString(),
+        stars: Number(g.stars),
+        limited: !!g.limited,
+        birthday: !!g.birthday,
+      }))
+      .sort((a: StarGiftInfo, b: StarGiftInfo) => a.stars - b.stars);
+  }
+
+  /** Send a star gift (paid from the user's Stars balance) with a message. */
+  async sendGift(
+    userId: number,
+    peer: { telegramUserId: bigint | null; username: string | null; phone: string | null },
+    giftId: string,
+    message?: string,
+  ): Promise<void> {
+    try {
+      const client = await this.getClient(userId);
+      const resolved = await this.resolvePeer(userId, client, peer);
+      const inputPeer = await client.getInputEntity(resolved);
+      const invoice = new Api.InputInvoiceStarGift({
+        peer: inputPeer,
+        giftId: bigInt(giftId) as any,
+        message: message
+          ? new Api.TextWithEntities({ text: message.slice(0, 255), entities: [] })
+          : undefined,
+      });
+      const form: any = await client.invoke(new Api.payments.GetPaymentForm({ invoice }));
+      await client.invoke(new Api.payments.SendStarsForm({ formId: form.formId, invoice }));
     } catch (e: any) {
       throw this.translateError(userId, e);
     }

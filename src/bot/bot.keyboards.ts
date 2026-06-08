@@ -50,6 +50,7 @@ export const congratPreviewKeyboard = (contactId: number) =>
   Markup.inlineKeyboard([
     [Markup.button.callback('🚀 Отправить сейчас', `cg:now:${contactId}`)],
     [Markup.button.callback('🕐 Запланировать на ДР', `cg:sched:${contactId}`)],
+    [Markup.button.callback('🎁 Подарить с поздравлением', `gift:pick:${contactId}`)],
     [Markup.button.callback('✏️ Переписать', `c:congrat:${contactId}`)],
     [Markup.button.callback('« Отмена', `c:view:${contactId}`)],
   ]);

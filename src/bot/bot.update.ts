@@ -716,6 +716,121 @@ export class BotUpdate {
     );
   }
 
+  // ── Gifts (Telegram Stars) ────────────────────────────────────────
+
+  @Action(/^gift:pick:(\d+)$/)
+  async actGiftPick(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const contactId = parseInt((ctx as any).match[1], 10);
+    if (!(await this.sessions.hasActive(user.id))) {
+      await this.safeEdit(ctx, '⚠️ Сначала подключите аккаунт (⚙️ Настройки).', kb.backToMenu());
+      return;
+    }
+    try {
+      const [balance, gifts] = await Promise.all([
+        this.mtproto.getStarBalance(user.id),
+        this.mtproto.listGifts(user.id),
+      ]);
+      const rows: any[] = [];
+      let row: any[] = [];
+      for (const g of gifts.slice(0, 12)) {
+        row.push(
+          Markup.button.callback(
+            `${g.birthday ? '🎂' : '🎁'} ${g.stars}⭐`,
+            `gift:confirm:${contactId}:${g.id}`,
+          ),
+        );
+        if (row.length === 2) {
+          rows.push(row);
+          row = [];
+        }
+      }
+      if (row.length) rows.push(row);
+      rows.push([Markup.button.callback('« Отмена', `c:view:${contactId}`)]);
+      await this.safeEdit(
+        ctx,
+        `🎁 <b>Подарок</b>\nВаш баланс: <b>${balance}⭐</b>\n` +
+          'Выберите подарок (спишется со звёздного баланса). 🎂 — праздничные.',
+        Markup.inlineKeyboard(rows),
+      );
+    } catch (e: any) {
+      await this.safeEdit(ctx, `❌ Не удалось получить подарки: ${esc(e?.message)}`, kb.backToMenu());
+    }
+  }
+
+  @Action(/^gift:confirm:(\d+):(\d+)$/)
+  async actGiftConfirm(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const m = (ctx as any).match;
+    const contactId = parseInt(m[1], 10);
+    const giftId = m[2];
+    const c = await this.contacts.getById(user.id, contactId);
+    if (!c) return;
+    const [balance, gifts] = await Promise.all([
+      this.mtproto.getStarBalance(user.id),
+      this.mtproto.listGifts(user.id),
+    ]);
+    const gift = gifts.find((g) => g.id === giftId);
+    if (!gift) {
+      await this.safeEdit(ctx, 'Подарок недоступен.', kb.backToMenu());
+      return;
+    }
+    const draft = await this.drafts.getActiveDraft(user.id, contactId);
+    const enough = balance >= gift.stars;
+    const lines = [
+      '🎁 <b>Подтверждение подарка</b>',
+      '',
+      `Кому: <b>${esc(c.fullName)}</b>`,
+      `Подарок: <b>${gift.stars}⭐</b>`,
+      `Баланс: ${balance}⭐ ${enough ? '' : '⚠️ недостаточно звёзд'}`,
+      draft
+        ? `\n✉️ Сообщение к подарку: <i>${esc(draft.draftText.slice(0, 120))}</i>`
+        : '\n(подарок без сообщения)',
+    ];
+    const rows: any[] = [];
+    if (enough) {
+      rows.push([
+        Markup.button.callback(`✅ Подарить за ${gift.stars}⭐`, `gift:do:${contactId}:${giftId}`),
+      ]);
+    }
+    rows.push([Markup.button.callback('« Назад', `gift:pick:${contactId}`)]);
+    await this.safeEdit(ctx, lines.join('\n'), Markup.inlineKeyboard(rows));
+  }
+
+  @Action(/^gift:do:(\d+):(\d+)$/)
+  async actGiftDo(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery('Отправляю подарок…');
+    const user = await this.me(ctx);
+    const m = (ctx as any).match;
+    const contactId = parseInt(m[1], 10);
+    const giftId = m[2];
+    const c = await this.contacts.getById(user.id, contactId);
+    if (!c) return;
+    const draft = await this.drafts.getActiveDraft(user.id, contactId);
+    await this.safeEdit(ctx, '🎁 Отправляю подарок…');
+    try {
+      await this.mtproto.sendGift(
+        user.id,
+        { telegramUserId: c.telegramUserId, username: c.username, phone: c.normalizedPhone },
+        giftId,
+        draft?.draftText,
+      );
+      await this.reply(
+        ctx,
+        `✅ Подарок отправлен <b>${esc(c.fullName)}</b>${draft ? ' вместе с поздравлением' : ''}! 🎉`,
+        kb.backToMenu(),
+      );
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const human = /BALANCE|STARS|insufficient|FORM/i.test(msg)
+        ? 'возможно, недостаточно звёзд на балансе или подарок недоступен'
+        : msg;
+      await this.reply(ctx, `❌ Не удалось отправить подарок: ${esc(human)}`, kb.backToMenu());
+    }
+  }
+
   // ── Reminders ─────────────────────────────────────────────────────
 
   @Action('set:reminders')

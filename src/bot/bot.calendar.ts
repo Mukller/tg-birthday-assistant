@@ -77,19 +77,14 @@ export function buildBirthdayCalendar(
   const bd = new Set(daysWithBirthday);
   const rows: any[][] = [];
 
-  rows.push([
-    Markup.button.callback('«', `bcal:nav:${year - 1}:${month}`),
-    Markup.button.callback(`${year}`, IGNORE),
-    Markup.button.callback('»', `bcal:nav:${year + 1}:${month}`),
-  ]);
-
+  // Month navigation (year rolls over automatically at Dec/Jan).
   const prevM = month === 1 ? 12 : month - 1;
   const prevY = month === 1 ? year - 1 : year;
   const nextM = month === 12 ? 1 : month + 1;
   const nextY = month === 12 ? year + 1 : year;
   rows.push([
     Markup.button.callback('‹', `bcal:nav:${prevY}:${prevM}`),
-    Markup.button.callback(MONTHS_RU[month - 1], IGNORE),
+    Markup.button.callback(`${MONTHS_RU[month - 1]} ${year}`, IGNORE),
     Markup.button.callback('›', `bcal:nav:${nextY}:${nextM}`),
   ]);
 
