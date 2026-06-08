@@ -22,6 +22,7 @@ import { SendingModule } from './sending/sending.module';
 import { ExportModule } from './export/export.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BotModule } from './bot/bot.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { BotModule } from './bot/bot.module';
     ExportModule,
     SchedulerModule,
     BotModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

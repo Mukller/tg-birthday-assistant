@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Update, Start, Command, Action, On, Ctx } from 'nestjs-telegraf';
-import { Context } from 'telegraf';
+import { Context, Markup } from 'telegraf';
 import { DateTime } from 'luxon';
 import { User } from '@prisma/client';
 
@@ -237,7 +237,6 @@ export class BotUpdate {
       where: { userId: user.id },
       data: { currentStep: 'IMPORT_CONTACTS' },
     });
-    const { Markup } = await import('telegraf');
     await this.reply(
       ctx,
       '✅ <b>Аккаунт подключён!</b>\n\nТеперь импортируем ваши контакты, чтобы вы могли ' +
@@ -399,7 +398,6 @@ export class BotUpdate {
       const icon = h.status === 'sent' ? '✅' : h.status === 'failed' ? '❌' : '⏳';
       lines.push(`${icon} ${when} — ${esc(h.messageText.slice(0, 60))}`);
     }
-    const { Markup } = await import('telegraf');
     await this.safeEdit(
       ctx,
       lines.join('\n'),
@@ -422,7 +420,6 @@ export class BotUpdate {
     await ctx.answerCbQuery();
     const user = await this.me(ctx);
     const upcoming = await this.contacts.listUpcoming(user.id, 30, user.timezone);
-    const { Markup } = await import('telegraf');
     if (upcoming.length === 0) {
       await this.safeEdit(
         ctx,
@@ -758,7 +755,6 @@ export class BotUpdate {
   private async handleSearch(ctx: Context, user: User, text: string): Promise<void> {
     await this.fsm.clear(ctx.from!.id);
     const results = await this.contacts.search(user.id, text, 8);
-    const { Markup } = await import('telegraf');
     if (results.length === 0) {
       await this.reply(ctx, 'Ничего не найдено.', kb.backToMenu());
       return;
