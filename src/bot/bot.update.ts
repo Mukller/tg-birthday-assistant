@@ -195,6 +195,49 @@ export class BotUpdate {
     else await this.reply(ctx, text, kb.mainMenuKeyboard());
   }
 
+  // ── Calendar ──────────────────────────────────────────────────────
+
+  @Action('menu:calendar')
+  async actCalendar(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    await this.showCalendar(ctx, await this.me(ctx));
+  }
+
+  private async showCalendar(ctx: Context, user: User): Promise<void> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { ownerUserId: user.id, birthDate: { not: null } },
+    });
+    if (contacts.length === 0) {
+      await this.safeEdit(
+        ctx,
+        '📅 Пока нет ни одной даты рождения.\nДобавьте даты в разделе 📇 Контакты.',
+        kb.backToMenu(),
+      );
+      return;
+    }
+
+    const items = contacts
+      .map((c) => ({ c, info: nextBirthdayInfo(c.birthDate!, user.timezone) }))
+      .sort((a, b) => a.info.daysUntil - b.info.daysUntil);
+
+    const lines: string[] = ['📅 <b>Календарь дней рождения</b>', ''];
+    const limit = 50;
+    let currentMonth = '';
+    for (const { c, info } of items.slice(0, limit)) {
+      const month = info.next.setLocale('ru').toFormat('LLLL');
+      if (month !== currentMonth) {
+        currentMonth = month;
+        lines.push('', `<b>${month.charAt(0).toUpperCase()}${month.slice(1)}</b>`);
+      }
+      const when = info.daysUntil === 0 ? 'сегодня' : `через ${info.daysUntil} дн.`;
+      const age = info.turning != null ? `, ${info.turning}` : '';
+      lines.push(`• ${info.next.toFormat('dd.MM')} — ${esc(c.fullName)} (${when}${age})`);
+    }
+    if (items.length > limit) lines.push('', `… и ещё ${items.length - limit}`);
+
+    await this.safeEdit(ctx, lines.join('\n').trim(), kb.backToMenu());
+  }
+
   // ── Account connection / login ────────────────────────────────────
 
   @Action('set:reconnect')
