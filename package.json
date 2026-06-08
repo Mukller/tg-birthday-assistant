@@ -10,6 +10,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
+    "start:local": "powershell -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "test": "node --test",
     "test:ci": "npm run build && node --test",
     "prisma:generate": "prisma generate",
