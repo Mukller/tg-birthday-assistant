@@ -5,6 +5,7 @@ import { formatBirthDate } from '../common/date.util';
 export const mainMenuKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.callback('✍️ Написать поздравления', 'menu:congrats')],
+    [Markup.button.callback('📋 Мои поздравления', 'menu:mycongrats')],
     [
       Markup.button.callback('📅 Календарь', 'menu:calendar'),
       Markup.button.callback('📇 Контакты', 'menu:contacts'),
@@ -90,9 +91,10 @@ export const settingsKeyboard = (connected: boolean) =>
         'set:reconnect',
       ),
     ],
+    [Markup.button.callback('🔄 Импорт контактов из Telegram', 'set:synccontacts')],
     [
       Markup.button.callback('📤 Экспорт', 'set:export'),
-      Markup.button.callback('📥 Импорт', 'set:import'),
+      Markup.button.callback('📥 Импорт из бэкапа', 'set:import'),
     ],
     [Markup.button.callback('🗑 Удалить мои данные', 'set:delete')],
     [Markup.button.callback('« Главное меню', 'menu:main')],

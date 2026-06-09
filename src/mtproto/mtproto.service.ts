@@ -335,13 +335,15 @@ export class MtprotoService {
       .filter((g: any) => g.className === 'StarGift' && !g.soldOut)
       .map((g: any) => {
         const attrs = g.sticker?.attributes ?? [];
-        const alt = attrs.find((a: any) => a.className === 'DocumentAttributeSticker')?.alt;
+        const alt = attrs
+          .map((a: any) => a?.alt)
+          .find((x: any) => typeof x === 'string' && x.length > 0);
         return {
           id: g.id.toString(),
           stars: Number(g.stars),
           limited: !!g.limited,
           birthday: !!g.birthday,
-          emoji: alt || '🎁',
+          emoji: alt || (g.birthday ? '🎂' : '🎁'),
         };
       })
       .sort((a: StarGiftInfo, b: StarGiftInfo) => a.stars - b.stars);

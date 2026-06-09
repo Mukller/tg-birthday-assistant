@@ -196,6 +196,50 @@ export class BotUpdate {
     else await this.reply(ctx, text, kb.mainMenuKeyboard());
   }
 
+  // ── My congratulations ────────────────────────────────────────────
+
+  @Action('menu:mycongrats')
+  async actMyCongrats(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const [scheduled, drafts, recent] = await Promise.all([
+      this.sending.listPending(user.id),
+      this.drafts.listActive(user.id),
+      this.logs.history(user.id, 5),
+    ]);
+    const nameOf = async (contactId: number) =>
+      esc((await this.contacts.getById(user.id, contactId))?.fullName ?? '—');
+
+    const lines: string[] = ['📋 <b>Мои поздравления</b>', ''];
+    if (scheduled.length) {
+      lines.push('🕐 <b>Запланированы:</b>');
+      for (const s of scheduled.slice(0, 15)) {
+        const when = DateTime.fromJSDate(s.scheduledFor).toFormat('dd.MM HH:mm');
+        lines.push(`• ${await nameOf(s.contactId)} — ${when}`);
+      }
+      lines.push('');
+    }
+    if (drafts.length) {
+      lines.push('✍️ <b>Черновики:</b>');
+      for (const d of drafts.slice(0, 15)) {
+        lines.push(`• ${await nameOf(d.contactId)}: <i>${esc(d.draftText.slice(0, 50))}</i>`);
+      }
+      lines.push('');
+    }
+    if (recent.length) {
+      lines.push('📜 <b>Недавно отправлено:</b>');
+      for (const h of recent) {
+        const icon = h.status === 'sent' ? '✅' : h.status === 'failed' ? '❌' : '⏳';
+        const when = DateTime.fromJSDate(h.createdAt).toFormat('dd.MM HH:mm');
+        lines.push(`${icon} ${await nameOf(h.contactId)} — ${when}`);
+      }
+    }
+    if (scheduled.length === 0 && drafts.length === 0 && recent.length === 0) {
+      lines.push('Пока пусто. Создайте через «✍️ Написать поздравления».');
+    }
+    await this.safeEdit(ctx, lines.join('\n').trim(), kb.backToMenu());
+  }
+
   // ── Calendar ──────────────────────────────────────────────────────
 
   @Action('menu:calendar')
@@ -596,10 +640,41 @@ export class BotUpdate {
 
   @Action(/^c:del:(\d+)$/)
   async actContactDelete(@Ctx() ctx: Context): Promise<void> {
-    await ctx.answerCbQuery('Удалено');
+    await ctx.answerCbQuery();
     const user = await this.me(ctx);
-    await this.contacts.delete(user.id, parseInt((ctx as any).match[1], 10));
-    await this.showContacts(ctx, user, 0);
+    const contactId = parseInt((ctx as any).match[1], 10);
+    const c = await this.contacts.getById(user.id, contactId);
+    if (!c) {
+      await this.showContacts(ctx, user, 0);
+      return;
+    }
+    await this.safeEdit(
+      ctx,
+      `❌ Удалить контакт <b>${esc(c.fullName)}</b>?\n` +
+        'Вместе с ним удалятся его дата рождения, черновики и история.',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('✅ Да, удалить', `c:delok:${contactId}`)],
+        [Markup.button.callback('« Отмена', `c:view:${contactId}`)],
+      ]),
+    );
+  }
+
+  @Action(/^c:delok:(\d+)$/)
+  async actContactDeleteConfirm(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery('Удаляю…');
+    const user = await this.me(ctx);
+    const contactId = parseInt((ctx as any).match[1], 10);
+    const c = await this.contacts.getById(user.id, contactId);
+    try {
+      await this.contacts.delete(user.id, contactId);
+      await this.safeEdit(
+        ctx,
+        `✅ Контакт ${c ? '<b>' + esc(c.fullName) + '</b> ' : ''}удалён.`,
+        Markup.inlineKeyboard([[Markup.button.callback('« Контакты', 'menu:contacts')]]),
+      );
+    } catch (e: any) {
+      await this.safeEdit(ctx, `❌ Не удалось удалить: ${esc(e?.message)}`, kb.backToMenu());
+    }
   }
 
   // ── Congratulations ───────────────────────────────────────────────
@@ -952,6 +1027,32 @@ export class BotUpdate {
       `⚙️ <b>Настройки</b>\n\nTelegram-аккаунт: ${status}\nЧасовой пояс: ${user.timezone}`,
       kb.settingsKeyboard(connected),
     );
+  }
+
+  @Action('set:synccontacts')
+  async actSyncContacts(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    if (!(await this.sessions.hasActive(user.id))) {
+      await this.safeEdit(
+        ctx,
+        '⚠️ Сначала подключите аккаунт: ⚙️ Настройки → 🔌 Переподключить аккаунт.',
+        kb.backToMenu(),
+      );
+      return;
+    }
+    await this.safeEdit(ctx, '⏳ Импортирую контакты из Telegram, это может занять до минуты…');
+    try {
+      const res = await this.contacts.importForUser(user.id);
+      await this.safeEdit(
+        ctx,
+        `✅ Импорт завершён: новых <b>${res.imported}</b>, обновлено ${res.updated} ` +
+          `(просмотрено ${res.total}).`,
+        kb.backToMenu(),
+      );
+    } catch (e: any) {
+      await this.safeEdit(ctx, `❌ Импорт не удался: ${esc(e?.message)}`, kb.backToMenu());
+    }
   }
 
   @Action('set:export')
