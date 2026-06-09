@@ -22,14 +22,26 @@ export class SchedulerService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Recreate per-user workers so delayed jobs survive a restart.
-    const rows = await this.prisma.scheduledMessage.findMany({
-      where: { status: 'pending' },
-      select: { userId: true },
-      distinct: ['userId'],
-    });
-    for (const r of rows) this.queue.getQueue(r.userId);
-    if (rows.length) this.logger.log(`Warmed ${rows.length} user queue(s)`);
+    // Recreate per-user workers so delayed jobs survive a restart, and resume
+    // any queue that a prior invalid session left paused.
+    const [pending, sessions] = await Promise.all([
+      this.prisma.scheduledMessage.findMany({
+        where: { status: 'pending' },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+      this.prisma.telegramSession.findMany({
+        where: { isActive: true, status: 'active' },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+    ]);
+    const ids = new Set<number>([...pending.map((r) => r.userId), ...sessions.map((r) => r.userId)]);
+    for (const id of ids) {
+      this.queue.getQueue(id);
+      await this.queue.resumeUser(id);
+    }
+    if (ids.size) this.logger.log(`Warmed & resumed ${ids.size} user queue(s)`);
   }
 
   /** Daily birthday reminder sweep (09:00 server time). */
