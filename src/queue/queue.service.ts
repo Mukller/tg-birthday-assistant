@@ -40,7 +40,8 @@ export class QueueService implements OnModuleDestroy {
   }
 
   private name(userId: number): string {
-    return `user:${userId}`;
+    // BullMQ 5.x forbids ':' in queue names (it's the internal key separator).
+    return `user-${userId}`;
   }
 
   getQueue(userId: number): Queue {
