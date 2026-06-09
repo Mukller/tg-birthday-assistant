@@ -465,6 +465,8 @@ export class BotUpdate {
 
   private async onConnected(ctx: Context, user: User): Promise<void> {
     await this.fsm.clear(ctx.from!.id);
+    // A previously invalid session may have paused the user's send queue — resume it.
+    await this.queue.resumeUser(user.id);
     await this.reminders.ensureDefaultRules(user.id);
     await this.prisma.onboardingState.update({
       where: { userId: user.id },
@@ -754,11 +756,19 @@ export class BotUpdate {
     const user = await this.me(ctx);
     const contactId = parseInt((ctx as any).match[1], 10);
     const draft = await this.drafts.getActiveDraft(user.id, contactId);
-    if (!draft) return;
-    if (!(await this.sessions.hasActive(user.id))) {
-      await this.safeEdit(ctx, '⚠️ Сначала подключите аккаунт (⚙️ Настройки).', kb.backToMenu());
+    if (!draft) {
+      await this.safeEdit(ctx, '⚠️ Нет текста поздравления. Сначала напишите его.', kb.backToMenu());
       return;
     }
+    if (!(await this.sessions.hasActive(user.id))) {
+      await this.safeEdit(
+        ctx,
+        '⚠️ Сначала подключите аккаунт: ⚙️ Настройки → 🔌 Переподключить аккаунт.',
+        kb.backToMenu(),
+      );
+      return;
+    }
+    await this.queue.resumeUser(user.id); // in case it was paused by a prior invalid session
     await this.sending.sendNow(user.id, contactId, draft.draftText);
     await this.safeEdit(
       ctx,
@@ -782,6 +792,7 @@ export class BotUpdate {
     const info = nextBirthdayInfo(c.birthDate, user.timezone);
     const [hh, mm] = c.birthTime.split(':').map((x) => parseInt(x, 10));
     const scheduledFor = info.next.set({ hour: hh || 0, minute: mm || 0, second: 0 }).toJSDate();
+    await this.queue.resumeUser(user.id);
     await this.sending.schedule(user.id, contactId, draft.draftText, scheduledFor);
     await this.drafts.markScheduled(draft.id, scheduledFor);
     await this.safeEdit(
@@ -880,13 +891,13 @@ export class BotUpdate {
         : '\n💬 В чат: <i>(нет текста — напишите поздравление заранее)</i>',
       note ? `🎁 К подарку: <i>${esc(note)}</i>` : '🎁 К подарку: <i>(без подписи)</i>',
     ];
-    const rows: any[] = [];
-    if (enough) {
-      rows.push([
-        Markup.button.callback(`✅ Подарить за ${gift.stars}⭐`, `gift:do:${contactId}:${giftId}`),
-      ]);
+    if (!enough) {
+      lines.push('\n<i>Звёзд может не хватить — тогда Telegram попросит пополнить баланс.</i>');
     }
-    rows.push([Markup.button.callback('« Выбрать другой', `gift:pick:${contactId}`)]);
+    const rows: any[] = [
+      [Markup.button.callback(`✅ Подарить за ${gift.stars}⭐`, `gift:do:${contactId}:${giftId}`)],
+      [Markup.button.callback('« Выбрать другой', `gift:pick:${contactId}`)],
+    ];
     await this.reply(ctx, lines.join('\n'), Markup.inlineKeyboard(rows));
   }
 
