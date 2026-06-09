@@ -36,6 +36,7 @@ const STEP = {
   IMPORT_WAIT: 'IMPORT_WAIT',
   CUSTOM_RULE: 'CUSTOM_RULE',
   ADD_CONTACT: 'ADD_CONTACT',
+  GIFT_NOTE: 'GIFT_NOTE',
 } as const;
 
 const PAGE_SIZE = 8;
@@ -734,14 +735,11 @@ export class BotUpdate {
       ]);
       const rows: any[] = [];
       let row: any[] = [];
-      for (const g of gifts.slice(0, 12)) {
+      for (const g of gifts.slice(0, 18)) {
         row.push(
-          Markup.button.callback(
-            `${g.birthday ? '🎂' : '🎁'} ${g.stars}⭐`,
-            `gift:confirm:${contactId}:${g.id}`,
-          ),
+          Markup.button.callback(`${g.emoji} ${g.stars}⭐`, `gift:note:${contactId}:${g.id}`),
         );
-        if (row.length === 2) {
+        if (row.length === 3) {
           rows.push(row);
           row = [];
         }
@@ -750,8 +748,7 @@ export class BotUpdate {
       rows.push([Markup.button.callback('« Отмена', `c:view:${contactId}`)]);
       await this.safeEdit(
         ctx,
-        `🎁 <b>Подарок</b>\nВаш баланс: <b>${balance}⭐</b>\n` +
-          'Выберите подарок (спишется со звёздного баланса). 🎂 — праздничные.',
+        `🎁 <b>Подарок</b>\nВаш баланс: <b>${balance}⭐</b>\nВыберите подарок (спишется со звёздного баланса):`,
         Markup.inlineKeyboard(rows),
       );
     } catch (e: any) {
@@ -759,35 +756,54 @@ export class BotUpdate {
     }
   }
 
-  @Action(/^gift:confirm:(\d+):(\d+)$/)
-  async actGiftConfirm(@Ctx() ctx: Context): Promise<void> {
+  @Action(/^gift:note:(\d+):(\d+)$/)
+  async actGiftNote(@Ctx() ctx: Context): Promise<void> {
     await ctx.answerCbQuery();
-    const user = await this.me(ctx);
     const m = (ctx as any).match;
     const contactId = parseInt(m[1], 10);
     const giftId = m[2];
+    await this.fsm.setState(ctx.from!.id, STEP.GIFT_NOTE, { contactId, giftId });
+    await this.safeEdit(
+      ctx,
+      '✍️ Напишите короткий текст, который пойдёт <b>вместе с подарком</b> (до 255 символов).\n' +
+        'Или отправьте «<code>-</code>» — подарок без подписи.\n\n' +
+        '<i>Само поздравление уйдёт отдельным сообщением в чат.</i>',
+    );
+  }
+
+  private async handleGiftNote(ctx: Context, user: User, text: string): Promise<void> {
+    const state = await this.fsm.getState<{ contactId: number; giftId: string }>(ctx.from!.id);
+    if (!state) return;
+    const note = text.trim() === '-' ? '' : text.trim();
+    await this.fsm.setState(ctx.from!.id, STEP.GIFT_NOTE, { ...state.data, note });
+
+    const { contactId, giftId } = state.data;
     const c = await this.contacts.getById(user.id, contactId);
-    if (!c) return;
+    if (!c) {
+      await this.fsm.clear(ctx.from!.id);
+      return;
+    }
     const [balance, gifts] = await Promise.all([
       this.mtproto.getStarBalance(user.id),
       this.mtproto.listGifts(user.id),
     ]);
     const gift = gifts.find((g) => g.id === giftId);
     if (!gift) {
-      await this.safeEdit(ctx, 'Подарок недоступен.', kb.backToMenu());
+      await this.fsm.clear(ctx.from!.id);
+      await this.reply(ctx, 'Подарок недоступен.', kb.backToMenu());
       return;
     }
     const draft = await this.drafts.getActiveDraft(user.id, contactId);
     const enough = balance >= gift.stars;
     const lines = [
-      '🎁 <b>Подтверждение подарка</b>',
+      '🎁 <b>Подтверждение</b>',
       '',
       `Кому: <b>${esc(c.fullName)}</b>`,
-      `Подарок: <b>${gift.stars}⭐</b>`,
-      `Баланс: ${balance}⭐ ${enough ? '' : '⚠️ недостаточно звёзд'}`,
+      `Подарок: <b>${gift.emoji} ${gift.stars}⭐</b>  (баланс ${balance}⭐${enough ? '' : ' ⚠️ мало'})`,
       draft
-        ? `\n✉️ Сообщение к подарку: <i>${esc(draft.draftText.slice(0, 120))}</i>`
-        : '\n(подарок без сообщения)',
+        ? `\n💬 В чат: <i>${esc(draft.draftText.slice(0, 150))}</i>`
+        : '\n💬 В чат: <i>(нет текста — напишите поздравление заранее)</i>',
+      note ? `🎁 К подарку: <i>${esc(note)}</i>` : '🎁 К подарку: <i>(без подписи)</i>',
     ];
     const rows: any[] = [];
     if (enough) {
@@ -795,39 +811,76 @@ export class BotUpdate {
         Markup.button.callback(`✅ Подарить за ${gift.stars}⭐`, `gift:do:${contactId}:${giftId}`),
       ]);
     }
-    rows.push([Markup.button.callback('« Назад', `gift:pick:${contactId}`)]);
-    await this.safeEdit(ctx, lines.join('\n'), Markup.inlineKeyboard(rows));
+    rows.push([Markup.button.callback('« Выбрать другой', `gift:pick:${contactId}`)]);
+    await this.reply(ctx, lines.join('\n'), Markup.inlineKeyboard(rows));
   }
 
   @Action(/^gift:do:(\d+):(\d+)$/)
   async actGiftDo(@Ctx() ctx: Context): Promise<void> {
-    await ctx.answerCbQuery('Отправляю подарок…');
+    await ctx.answerCbQuery('Отправляю…');
     const user = await this.me(ctx);
     const m = (ctx as any).match;
     const contactId = parseInt(m[1], 10);
     const giftId = m[2];
     const c = await this.contacts.getById(user.id, contactId);
     if (!c) return;
+
+    const state = await this.fsm.getState<{ giftId: string; note?: string }>(ctx.from!.id);
+    const note = state && state.data.giftId === giftId ? state.data.note ?? '' : '';
+    await this.fsm.clear(ctx.from!.id);
+
     const draft = await this.drafts.getActiveDraft(user.id, contactId);
-    await this.safeEdit(ctx, '🎁 Отправляю подарок…');
+    const peer = {
+      telegramUserId: c.telegramUserId,
+      username: c.username,
+      phone: c.normalizedPhone,
+    };
+    await this.safeEdit(ctx, '⏳ Отправляю поздравление и подарок…');
+
+    // 1) congratulation as a normal chat message
+    let chatOk = false;
+    if (draft?.draftText) {
+      try {
+        const res = await this.mtproto.sendMessage(user.id, peer, draft.draftText);
+        await this.logs.log({
+          userId: user.id,
+          contactId,
+          messageText: draft.draftText,
+          status: 'sent',
+          telegramMessageId: res.telegramMessageId,
+          sentAt: new Date(),
+        });
+        chatOk = true;
+      } catch (e: any) {
+        await this.logs.log({
+          userId: user.id,
+          contactId,
+          messageText: draft.draftText,
+          status: 'failed',
+          errorMessage: String(e?.message ?? e).slice(0, 200),
+        });
+      }
+    }
+
+    // 2) the gift with its own separate note
     try {
-      await this.mtproto.sendGift(
-        user.id,
-        { telegramUserId: c.telegramUserId, username: c.username, phone: c.normalizedPhone },
-        giftId,
-        draft?.draftText,
-      );
-      await this.reply(
-        ctx,
-        `✅ Подарок отправлен <b>${esc(c.fullName)}</b>${draft ? ' вместе с поздравлением' : ''}! 🎉`,
-        kb.backToMenu(),
-      );
+      await this.mtproto.sendGift(user.id, peer, giftId, note || undefined);
+      const chatNote = draft?.draftText
+        ? chatOk
+          ? '\n💬 Поздравление отправлено в чат.'
+          : '\n⚠️ Подарок ушёл, но текст в чат отправить не удалось.'
+        : '';
+      await this.reply(ctx, `✅ <b>${esc(c.fullName)}</b>: подарок отправлен! 🎉${chatNote}`, kb.backToMenu());
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const human = /BALANCE|STARS|insufficient|FORM/i.test(msg)
-        ? 'возможно, недостаточно звёзд на балансе или подарок недоступен'
+        ? 'возможно, недостаточно звёзд или подарок недоступен'
         : msg;
-      await this.reply(ctx, `❌ Не удалось отправить подарок: ${esc(human)}`, kb.backToMenu());
+      await this.reply(
+        ctx,
+        `❌ Подарок не отправлен: ${esc(human)}${chatOk ? '\n(поздравление в чат уже ушло)' : ''}`,
+        kb.backToMenu(),
+      );
     }
   }
 
@@ -1140,6 +1193,8 @@ export class BotUpdate {
         return this.handleCustomRule(ctx, user, text);
       case STEP.ADD_CONTACT:
         return this.handleAddContact(ctx, user, text);
+      case STEP.GIFT_NOTE:
+        return this.handleGiftNote(ctx, user, text);
       default:
         await this.reply(ctx, 'Откройте меню: /menu');
     }

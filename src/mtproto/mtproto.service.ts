@@ -31,6 +31,7 @@ export interface StarGiftInfo {
   stars: number;
   limited: boolean;
   birthday: boolean;
+  emoji: string; // the gift's own sticker emoji (🌹, 🧸, 🎂, …)
 }
 
 /**
@@ -332,12 +333,17 @@ export class MtprotoService {
     const gifts = res?.gifts ?? [];
     return gifts
       .filter((g: any) => g.className === 'StarGift' && !g.soldOut)
-      .map((g: any) => ({
-        id: g.id.toString(),
-        stars: Number(g.stars),
-        limited: !!g.limited,
-        birthday: !!g.birthday,
-      }))
+      .map((g: any) => {
+        const attrs = g.sticker?.attributes ?? [];
+        const alt = attrs.find((a: any) => a.className === 'DocumentAttributeSticker')?.alt;
+        return {
+          id: g.id.toString(),
+          stars: Number(g.stars),
+          limited: !!g.limited,
+          birthday: !!g.birthday,
+          emoji: alt || '🎁',
+        };
+      })
       .sort((a: StarGiftInfo, b: StarGiftInfo) => a.stars - b.stars);
   }
 
