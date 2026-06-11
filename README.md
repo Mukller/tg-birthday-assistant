@@ -1,5 +1,18 @@
 # 🎂 Telegram Birthday Assistant
 
+<div align="center">
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=flat-square)](LICENSE.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![NestJS](https://img.shields.io/badge/NestJS-Latest-red?style=flat-square&logo=nestjs)](https://nestjs.com/)
+[![maintained](https://img.shields.io/badge/maintained%3F-yes-green?style=flat-square)](https://github.com/Mukller/tg-birthday-assistant)
+[![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
+
+[English](README_EN.md) • Русский
+
+</div>
+
+
 Telegram-бот, который напоминает о днях рождения и отправляет поздравления
 **от вашего имени** через Telegram (MTProto/GramJS). Реализован по спецификации
 **SPEC-1** на стеке NestJS + Prisma + PostgreSQL + Redis + BullMQ + Telegraf + GramJS.
