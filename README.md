@@ -4,10 +4,22 @@
 [![maintained](https://img.shields.io/badge/maintained%3F-yes-green?style=flat-square)](https://github.com/Mukller/tg-birthday-assistant)
 [![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
 
+---
+
+## Language / Язык
+
 </div>
 
-<details open>
-<summary><strong>📖 English</strong></summary>
+| **📖 English** | **📖 Русский** |
+|:---:|:---:|
+| Scroll down / Листай вниз | Листай вниз / Scroll down |
+
+---
+
+## English Version
+
+
+
 
 # 🎂 Telegram Birthday Assistant
 
@@ -102,10 +114,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 MIT © 2024-2026 [Anton Mukller](https://github.com/Mukller)
 
-</details>
+---
 
-<details>
-<summary><strong>📖 Русский</strong></summary>
+## Русская версия
+
+
+
 
 # 🎂 Telegram Birthday Assistant
 
@@ -275,5 +289,3 @@ src/
 - Отправка по `telegram_user_id` использует «прогрев» entity-кэша через getDialogs;
   при наличии `@username` peer резолвится напрямую.
 ```
-
-</details>
