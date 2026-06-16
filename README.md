@@ -1,3 +1,9 @@
+<div align="center">
+
+[English](README_EN.md) • **Русский**
+
+</div>
+
 # 🎂 Telegram Birthday Assistant
 
 Telegram-бот, который напоминает о днях рождения и отправляет поздравления
