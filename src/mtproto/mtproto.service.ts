@@ -6,6 +6,7 @@ import { StringSession } from 'telegram/sessions';
 import { computeCheck } from 'telegram/Password';
 import { FloodWaitError } from 'telegram/errors';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { phoneToTimezone } from '../common/phone-timezone';
 import { SessionStoreService } from './session-store.service';
 import {
   FloodWaitSignal,
@@ -139,6 +140,13 @@ export class MtprotoService {
   private async finishLogin(userId: number, phoneNumber: string, client: TelegramClient) {
     const sessionString = client.session.save() as unknown as string;
     await this.sessions.save(userId, phoneNumber, sessionString);
+    // Auto-detect timezone from the phone's country code (best effort).
+    const tz = phoneToTimezone(phoneNumber);
+    if (tz) {
+      await this.prisma.user
+        .update({ where: { id: userId }, data: { timezone: tz } })
+        .catch(() => undefined);
+    }
     await this.prisma.authAttempt.updateMany({
       where: { userId, status: { in: ['code_sent', 'pending'] } },
       data: { status: 'completed' },

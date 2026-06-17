@@ -8,6 +8,7 @@ import { NotifierService } from '../notifier/notifier.service';
 import { QueueService } from '../queue/queue.service';
 import { dayLabel } from '../common/labels';
 import { esc } from '../common/html.util';
+import { phoneToTimezone } from '../common/phone-timezone';
 
 @Injectable()
 export class SchedulerService implements OnModuleInit {
@@ -42,6 +43,24 @@ export class SchedulerService implements OnModuleInit {
       await this.queue.resumeUser(id);
     }
     if (ids.size) this.logger.log(`Warmed & resumed ${ids.size} user queue(s)`);
+
+    // Best-effort timezone backfill from each connected user's login phone.
+    const withPhone = await this.prisma.telegramSession.findMany({
+      where: { isActive: true, status: 'active' },
+      select: { userId: true, phoneNumber: true },
+      orderBy: { id: 'desc' },
+    });
+    const done = new Set<number>();
+    for (const s of withPhone) {
+      if (done.has(s.userId)) continue;
+      done.add(s.userId);
+      const tz = phoneToTimezone(s.phoneNumber);
+      if (tz) {
+        await this.prisma.user
+          .update({ where: { id: s.userId }, data: { timezone: tz } })
+          .catch(() => undefined);
+      }
+    }
   }
 
   /** Daily birthday reminder sweep (09:00 server time). */

@@ -23,7 +23,7 @@ import { esc } from '../common/html.util';
 import { dayLabel } from '../common/labels';
 import { formatBirthDate, nextBirthdayInfo, toBirthDate } from '../common/date.util';
 import { buildCalendar, buildBirthdayCalendar } from './bot.calendar';
-import { generateSuggestions } from './suggestions';
+import { congratPage, renderCongrat } from './suggestions';
 import * as kb from './bot.keyboards';
 
 const STEP = {
@@ -1249,16 +1249,37 @@ export class BotUpdate {
   async actCongratSuggest(@Ctx() ctx: Context): Promise<void> {
     await ctx.answerCbQuery();
     const user = await this.me(ctx);
-    const contactId = parseInt((ctx as any).match[1], 10);
+    await this.showSuggestPage(ctx, user, parseInt((ctx as any).match[1], 10), 0);
+  }
+
+  @Action(/^cg:sgp:(\d+):(\d+)$/)
+  async actCongratSuggestPage(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const m = (ctx as any).match;
+    await this.showSuggestPage(ctx, user, parseInt(m[1], 10), parseInt(m[2], 10));
+  }
+
+  private async showSuggestPage(
+    ctx: Context,
+    user: User,
+    contactId: number,
+    page: number,
+  ): Promise<void> {
     const c = await this.contacts.getById(user.id, contactId);
     if (!c) return;
-    const suggestions = generateSuggestions(c.fullName);
-    const rows = suggestions.map((_, i) => [
-      Markup.button.callback(`Взять вариант ${i + 1}`, `cg:use:${contactId}:${i}`),
+    const pg = congratPage(c.fullName, page);
+    const rows = pg.items.map((it) => [
+      Markup.button.callback(`✅ Вариант ${it.index + 1}`, `cg:use:${contactId}:${it.index}`),
     ]);
+    rows.push([Markup.button.callback('🔄 Ещё варианты', `cg:sgp:${contactId}:${pg.page + 1}`)]);
     rows.push([Markup.button.callback('« Назад', `c:congrat:${contactId}`)]);
-    const preview = suggestions.map((s, i) => `<b>${i + 1}.</b> ${esc(s)}`).join('\n\n');
-    await this.safeEdit(ctx, `💡 Варианты поздравления:\n\n${preview}`, Markup.inlineKeyboard(rows));
+    const preview = pg.items.map((it) => `<b>${it.index + 1}.</b> ${esc(it.text)}`).join('\n\n');
+    await this.safeEdit(
+      ctx,
+      `💡 Варианты поздравления (стр. ${pg.page + 1}/${pg.totalPages}, всего ${pg.total}):\n\n${preview}`,
+      Markup.inlineKeyboard(rows),
+    );
   }
 
   @Action(/^cg:use:(\d+):(\d+)$/)
@@ -1270,8 +1291,7 @@ export class BotUpdate {
     const idx = parseInt(m[2], 10);
     const c = await this.contacts.getById(user.id, contactId);
     if (!c) return;
-    const suggestions = generateSuggestions(c.fullName);
-    await this.drafts.createDraft(user.id, contactId, suggestions[idx] ?? suggestions[0]);
+    await this.drafts.createDraft(user.id, contactId, renderCongrat(idx, c.fullName));
     await this.fsm.clear(ctx.from!.id);
     await this.showCongratPreview(ctx, user, contactId, true);
   }
