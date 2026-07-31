@@ -240,6 +240,43 @@ export class BotUpdate {
     await this.safeEdit(ctx, lines.join('\n').trim(), kb.backToMenu());
   }
 
+  // ── Statistics ────────────────────────────────────────────────────
+
+  @Action('menu:stats')
+  async actStats(@Ctx() ctx: Context): Promise<void> {
+    await ctx.answerCbQuery();
+    const user = await this.me(ctx);
+    const now = DateTime.now().setZone(user.timezone);
+    const [total, withBd, up7, up30, sent, pending, withDates] = await Promise.all([
+      this.contacts.count(user.id),
+      this.contacts.countWithBirthday(user.id),
+      this.contacts.listUpcoming(user.id, 7, user.timezone),
+      this.contacts.listUpcoming(user.id, 30, user.timezone),
+      this.prisma.messageLog.count({ where: { userId: user.id, status: 'sent' } }),
+      this.prisma.scheduledMessage.count({ where: { userId: user.id, status: 'pending' } }),
+      this.prisma.contact.findMany({
+        where: { ownerUserId: user.id, birthDate: { not: null } },
+        select: { birthDate: true },
+      }),
+    ]);
+    const thisMonth = withDates.filter(
+      (c) => DateTime.fromJSDate(c.birthDate!, { zone: 'utc' }).month === now.month,
+    ).length;
+    const monthName = now.setLocale('ru').toFormat('LLLL');
+    const lines = [
+      '📊 <b>Статистика</b>',
+      '',
+      `📇 Контактов: <b>${total}</b> (с датой ДР: ${withBd})`,
+      `🎂 Дней рождения в этом месяце (${monthName}): <b>${thisMonth}</b>`,
+      `📆 Ближайшие 7 дней: <b>${up7.length}</b>`,
+      `🗓 Ближайшие 30 дней: <b>${up30.length}</b>`,
+      `🕐 Запланировано отправок: <b>${pending}</b>`,
+      `✅ Отправлено поздравлений: <b>${sent}</b>`,
+      `🌍 Часовой пояс: ${user.timezone}`,
+    ];
+    await this.safeEdit(ctx, lines.join('\n'), kb.backToMenu());
+  }
+
   // ── Calendar ──────────────────────────────────────────────────────
 
   @Action('menu:calendar')

@@ -10,7 +10,10 @@ export const mainMenuKeyboard = () =>
       Markup.button.callback('📅 Календарь', 'menu:calendar'),
       Markup.button.callback('📇 Контакты', 'menu:contacts'),
     ],
-    [Markup.button.callback('⚙️ Настройки', 'menu:settings')],
+    [
+      Markup.button.callback('📊 Статистика', 'menu:stats'),
+      Markup.button.callback('⚙️ Настройки', 'menu:settings'),
+    ],
   ]);
 
 export const backToMenu = () =>

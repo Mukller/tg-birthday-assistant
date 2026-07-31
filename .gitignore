@@ -8,11 +8,11 @@ build/
 *.session
 *.session-journal
 
-# Generated data
-exports/
-backups/
+# Generated runtime data at project root (anchored so src/logs, src/export are NOT ignored)
+/exports/
+/backups/
+/logs/
 *.log
-logs/
 
 # Local Docker-less stack (portable postgres/redis binaries + data)
 .localstack/
