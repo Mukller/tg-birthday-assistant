@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      # prisma generate only needs the schema, not a live DB
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/birthday_assistant?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type-check
+        run: npx tsc --noEmit -p tsconfig.build.json
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: node --test

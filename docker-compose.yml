@@ -1,20 +1,18 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
     container_name: tba_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-birthday_assistant}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: birthday_assistant
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "15432:5432"
     volumes:
       - tba_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-birthday_assistant}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d birthday_assistant"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -23,13 +21,13 @@ services:
     image: redis:7-alpine
     container_name: tba_redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "16379:6379"
     volumes:
       - tba_redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -44,20 +42,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "${APP_PORT:-3000}:3000"
+    env_file:
+      - .env
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      PORT: 3000
-      BOT_TOKEN: ${BOT_TOKEN}
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY}
-      ADMIN_TELEGRAM_ID: ${ADMIN_TELEGRAM_ID}
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-birthday_assistant}?schema=public
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+      # Override host-based URLs with in-network service names
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/birthday_assistant?schema=public
+      REDIS_URL: redis://redis:6379
     volumes:
-      - ./sessions:/app/sessions
+      - ./exports:/app/exports
+      - ./backups:/app/backups
 
 volumes:
   tba_pgdata:
