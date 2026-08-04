@@ -5,6 +5,8 @@ All notable changes will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
+### Added
+- Auto-deploy: server polls origin/main every 2 min, deploys automatically once GitHub Actions CI passes
 
 ## [1.0.0] - Initial release
 ### Added
