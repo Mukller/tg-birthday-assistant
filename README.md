@@ -6,6 +6,13 @@
 
 # 🎂 Telegram Birthday Assistant
 
+<p align="center">
+  <a href="https://github.com/Mukller">
+    <img src="https://img.shields.io/badge/Anton%20Petnitsky-Developer-0d1117?style=for-the-badge&logo=github&logoColor=white&labelColor=0d1117&color=58a6ff" alt="Anton Petnitsky" />
+  </a>
+</p>
+
+
 Telegram-бот, который напоминает о днях рождения и отправляет поздравления
 **от вашего имени** через Telegram (MTProto/GramJS). Реализован по спецификации
 **SPEC-1** на стеке NestJS + Prisma + PostgreSQL + Redis + BullMQ + Telegraf + GramJS.
